@@ -1,0 +1,319 @@
+#Threading model - Nova Architech
+
+Tất cả các OpenStack service đều sử dụng **green thread model** cho việc threading. Model này được thực hiện bằng cách sử dụng **Python eventlet** và **greenlet libraries**.
+
+##1 What is green thread model ?
+Để hiểu về **green thread model**, trước tiên chúng ta cần phải hiểu về threading model.
+###1.1 Định nghĩa về thread - process
+Để hiểu về thread là gì, đầu tiên chúng ta cần phải hiểu tại sao sinh ra khái niệm thread, đó là vì nhu cầu lập trình tương tranh - concurrent programming.
+
+####Concurrent programming
+Trong lập trình, 2 sự kiện được gọi là concurrent với nhau nếu như chúng xảy ra trong cùng 1 **time interval**. Do vậy, nếu một môi trường thực thi (thường là OS) có 2 hay nhiều **tasks** được thực hiện trong cùng 1 **time interval**, thì ta gọi môi trường thực thi đó có tính **concurrency**.
+Ví dụ: Một hệ điều hành đa nhiệm (thực thi được nhiều chương trình cùng 1 lúc ) được gọi là một hệ điều hành có tính **concurrency**.
+
+- Concurrency trên môi trường thực thi là hệ điều hành
+
+Các concurrent proccess có thể thực thi trên phần cứng đơn luồng hoặc đa luồng. Nếu thực thi trên phần cứng đơn luồng, chúng ta có thể chia một **time interval** thành nhiều **time slice**, mỗi task sẽ được thực thi trong 1 **time slice**, sau đó dùng công nghệ **context switching** để chuyển task tiếp theo vào luồng.
+
+- Concurrency trên môi trường thực thi là chương trình
+
+Chúng ta vừa hiểu được tính **concurrency** đối với môi tường thực thi là hệ điều hành. Đối với môi trường thực thi là chương trình, tính **concurrency** cho phép một chương trình máy tính thực thi được nhiều công việc một lúc trong cùng 1 **time interval**. Chúng ta lưu ý rằng, việc thực thi được nhiều công việc cùng 1 lúc không đồng nghĩa hoàn toàn với việc thực thi được công việc nhanh chóng. Trong một số trường hợp, concurrency được sử dụng để giúp máy tính giải quyết một bài toán nhanh hơn ( bằng cách chia bài toán ra thành nhiều công việc nhỏ và sử dụng tính concurrency để thực hiện nhiều công việc nhỏ một lúc). Nhưng trong một số trường hợp khác, tính concurrency được sử dụng để giúp chương trình làm được nhiều công việc trong một khoảng thời gian, trong khi tốc độ thực hiện từng công việc chỉ đóng vai trò thứ yếu. Một ví dụ trong thực tế, đó là các website luôn muốn giữ được càng nhiều người truy cập vào website của mình cùng 1 lúc càng tốt. Để làm được việc đó, thì tốc độ người dùng truy cập vào website ( tức là khoảng thời gian từ lúc người dùng gửi yêu cầu đến website server cho đến khi website trả về trang web - tốc độ thực thi công việc) không phải là điều quan trọng nhất. Điều quan trọng nhất trong ví dụ này là có tối đa bao nhiêu người đồng thời được website server phục vụ trong một khoảng thời gian ( số lượng - **capacity**). Mục tiêu trong ví dụ này là phần mềm phải phục vụ được tối đa số lượng connections đến trong 1 khoảng thời gian. 
+
+- Hai hướng tiếp cận để đạt được tính concurrency:
+
+Lập trình song song (parallel programming) và lập trình phân tán (distributed programming) là 2 cách tiếp cận để giải quyết bài toán tạo cho một chương trình có tính **concurrency**.Đó là 2 mô hình lập trình (programming paradigms) khác nhau, nhưng có sự giao thoa lẫn nhau. Mô hình parallel programming là mô hình phân chia công việc của một chương trình cho 2 hay nhiều  luồng của cùng 1 máy tính. Mô hình distributed programming cho phép phân chia công việc của 1 chương trình
+(chương trình phân tán) cho hai hay nhiều máy tính khác nhau cùng thực hiện đồng thời. Việc thực hiện lập trình song song có thể sử dụng process hoặc thread (Nhiều proccess thực thi đồng thời chương trình trên 1 máy, hoặc nhiều thread xử lý đồng thời chương trình trên 1 proccess)... Multithreading chỉ giới hạn trong lập trình song song. Xét về khía cạnh kỹ thuật, thì lập trình song song cũng có thể phân tán ( sử dụng PVM programming), và lập trình phân tán cũng có thể thực hiện song song ( sử dụng MPI (Message Passing Interface) programming)  
+
+ - Các yêu cầu để có thể sử dụng parallel programming và distributed programming:
+Để có thể sử dụng parallel programming và distributed programming, người lập trình cần hiểu rằng, mặc dù 2 mô hình này đem lại rất nhiều lợi tích, tuy nhiên chúng cũng sẽ tồn tại một số thách thức, cũng như chúng ta cần có một vài điều kiện tiên quyết để có thể sử dụng 2 mô hình lập trình này. Ở phần tiếp theo chúng ta sẽ bàn tới một số thách thức, còn trong phần này chúng ta sẽ nói tới một vài điều kiện cần thiết. Trước khi một phần mềm hay một hệ thống phần mềm được phát triển, chúng sẽ phải trải qua một qúa trình thiết kế. Đối với 2 mô hình parallel programming và distributed programming, trong qúa trình thiết kế hệ thống, chúng ta phải giải quyết 3 vấn đề điều kiện: Phân tách hệ thống (decomposition), truyền thông (communication), đồng bộ hóa (synchronization).
+
+ - **Decomposition**
+
+Decomposition là qúa trình chia nhỏ vấn đề và giải pháp thành nhiều thành phần. Đôi lúc, các thành phần sẽ là các phần được chia theo logic chức năng ( ví dụ như: searching, sorting, calculating, input, output, etc). Ở một góc nhìn khác, các thành phần cũng có thể được chia theo  logic tài nguyên (file, communication, printer, database, etc.). Sự phân tách (decomposition) của một giải pháp phần mềm liên quan đến vấn đề thiết kế hệ thống (design process).
+Đối với concurrent programming, vấn đề cần giải quyết là làm sao để chia tách hệ thống thành các thành phần có thể thực thi đồng thời với nhau (  concurrently executing parts). Vấn đề này cần phải được giải quyêt ngay trong khâu thiết kế hệ thống, và phải được tích hợp vào khi xây dựng mô hình giải pháp cho hệ thống. 
+
+Khi tiến hành phân tích và thiết kế hệ thống, chúng ta sẽ tìm ra được mô hình của hệ thống phù hợp với vấn đề. Nếu mô hình hệ thống mà chúng ta tìm được không phù hợp để áp dụng parallel programming và distributed programming, bạn sẽ cần sử dụng mô hình lập trình tuần tự (sequential programming).
+
+ - **Communication**
+
+Sau khi bạn chia hệ thống thành nhiều thành phần nhỏ có khả năng **concurrently executing**, bạn sẽ nhận ra các thành phần của hệ thống sẽ cần phải truyền thông với nhau. Ở đây chúng ta sẽ thấy, khi hệ thống làm việc, những câu hỏi sau sẽ được đặt ra : Sự truyền thông sẽ diễn ra như thế nào  nếu các thành phần nằm ở các process khác nhau, hoặc ở các máy tính khác nhau ? Các thành phần khác nhau có chia sẻ chung vùng nhớ nào không ? Làm thế nào để một thành phần nhận được tín hiệu một thành phần khác đã hoàn thành công việc ? Thành phần nào sẽ được chạy đầu tiên ? Làm sao để một thành phần trong hệ thống biết được một thành phần khác đang bị lỗi ? Các câu hỏi vừa nêu ở trên là những câu hỏi chính chúng ta cần phải trả lời để giải quyết vấn đề truyền thông khi thiết kế một hệ thống sử dụng mô hình parallel programming và distributed programming. 
+
+ - **Synchronization**
+
+Chúng ta đã thực hiện việc chia hệ thống thành nhiều thành phần và xác định sự truyền thông giữa chúng. Đồng thời, khi thiết kế hệ thống chúng ta cũng đã xác định được vai trò của từng thành phần trong hệ thống. Lúc này, chúng ta sẽ thấy, các thành phần trong hệ thống sẽ cần phải hợp tác (coordinated) với nhau để giải quyết bài toán ban đầu đặt ra. Các thành phần trong hệ thống khi hoạt động cũng cần phải phối hợp với nhau theo một trình tự nhất định. Tất cả các thành phần sẽ cùng hoạt động một lúc, hay sẽ có một số thành phần hoạt động và một số thành phần ở trạng thái chờ ? Làm thế nào để xác định quyền và thứ tự truy cập vào một tài nguyên chung giữa hai hay nhiều thành phần? Thành phần nào sẽ được truy cập trước tiên ? Nếu một thành phần thực hiện xong công việc mà nó được giao trước các thành phần khác, nó có được giao công việc mới không ? ...vv...
+
+ DCS (decomposition, communication, and synchronization) là các vấn đề cơ bản nhất mà chúng ta cần phải giải quyết khi tiếp cận và sử dụng mô hình parallel hay distributed programming. Bên cạnh đó, việc xác định vị trí của DCS cũng rất quan trọng. Trong lúc phát triển hệ thống, chúng ta sẽ thấy có hàng loạt layer trong hệ thống có thể áp dụng DCS vào. Các đặc điểm và cách áp dụng DCS ở từng layer cũng sẽ có sự khác nhau.
+Concurrency có thể xảy ra ở các tầng sau:
+
+- Instruction level
+- Routine (function/procedure) level - threading programming 
+- Object level - CORBA (Common Object Request Broker Architecture) standard
+- Application level
+
+##1.1.1 Định nghĩa process 
+Một process là một đơn vị công việc được tạo ra bởi hệ điều hành (operating system). Một process không phải lúc nào cũng tương đương với một chương trình. Một chương trình có thể bao gồm nhiều process. Ở một vài trường hợp, một process cũng có thể không liên quan tới một chương trình nào cả. Process là sản phẩm của hệ điều hành, trong khi đó chương trình là sản phẩm của developer.
+Để một đơn vị công việc được gọi là một process, nó cần có một không gian địa chỉ - **address space** đã được hệ điều hành chỉ định dành riêng cho nó. Nó cần phải có một **proccess id**. Nó cần phải có một **state** và một entry trong **process table**. Theo chuẩn POSIX, một process cần phải có 1 hoặc nhiều flows control với không gian địa chỉ xác định và tài nguyên hệ thống để thực thi các flows control này. Một process sẽ có một tập các chỉ dẫn thực thi hệ thống (executing instructions) nằm trong không gian địa chỉ của process đó. Không gian địa chỉ của một process được cấp phát cho tập chỉ dẫn thực thi, mọi dữ liệu thuộc về process đó, một stack cho  các lời gọi hàm (function calls), và không gian nhớ cho local variables.
+
+
+**Hai loại process trong hệ thống**
+
+Khi một process được thực thi, hệ điều hành sẽ chỉ định một processor phục vụ nó. Processor sẽ thực thi các instruction của process này trong một khoảng thời gian - time period. Hệ điều hành sẽ lập lịch để processor có thể từ đang phục vụ process này, chuyển sang phục vụ process khác, nhằm tạo điều kiện cho từng process đều có cơ hội được chạy, không để xảy ra tình trạng chỉ có đúng một proccess được chạy trong một khoảng thời gian dài, trong khi các process khác không được thực thi. 
+
+Quay trở lại tiêu đề, chúng ta có hai loại process trong hệ thống, đó là **user process** và **system process**. System proccess là tiến trình thực thi các instruction phục vụ cho hệ điều hành - system, và cũng chính các tiến trình này kiểm soát toàn bộ hệ thống đang chạy. Vai trò của các tiến trình này là phân phối bộ nhớ (memory), swapping page giữa bộ nhớ trong(RAM) và bộ nhớ ngoài (như là hard drive), kiểm tra các thiết bị đang kết nối tới hệ thống, vv... Đồng thời system proccess cũng thực thi một số chức năng phục vụ cho user proccess như thực thi các I/O request, phân phối và quản lý bộ nhớ, vv... User procces thực thi mã nguồn của bản thân nó, và thỉnh thoảng sử dụng một số lời gọi hệ thống ( system function calls). Khi một user process thực thi mã nguồn của bản thân nó, process đó sẽ ở trạng thái **user mode**. Khi ở chế độ **user mode**, process đó không thể thực thi các privileged machine instructions. Khi user process thực hiện các  system function calls, nó sẽ thực thi các instruction của hệ điều hành cung cấp. Lúc này proccess sẽ được giữ ở trạng thái **kernel mode** cho đến khi system function calls mà nó gọi tới thực thi xong, và lúc này proccessor được đưa cho **kernel** để hoàn tất việc thực hiện  system function calls. Một process ở trạng thái **kernel mode** không thể bị chiếm mất proccessor bởi một process khác. 
+
+**Anatomy of a Process**
+SOURCE:  [in-memory-layout](https://gabrieletolomei.wordpress.com/miscellanea/operating-systems/in-memory-layout/)
+Để khám phá kiến trúc của process khi nó tồn tại trong bộ nhớ chính (RAM), chúng ta xem xét một process được chạy trên môi trường cụ thể: **Linux OS** trên vi xử lý **32-bit x86 architecture**
+![memory_layout](https://gabrieletolomei.files.wordpress.com/2013/10/memory_layout.jpg?w=960)
+Như đã đề cập ở phần trước, mỗi một process sở hữu một không gian địa chỉ riêng - address space. Không gian địa chỉ này là không gian ảo -  virtual address space. Trong trường hợp mà chúng ta đang xét, hệ điều hành là loại 32bit, do đó address space của process có độ rộng là 2^32 bit = 4 GB
+Address space của một process được chia ra làm 2 phần lớn: **kernel space** và **user mode space**.  Kernel space trong Linux 32 bit thường có độ rộng là 1GB và có vị trí xác định từ **0x c000 0000** tới **ox ffff ffff**. User mode space có độ rộng là 3GB, có giới hạn từ **0x 0000 0000** tới **0x bfff ffff**
+
+
+ **some note about virtual address space**
+Khi một process đến lượt thực thi, nó được OS giao cho processor để thực thi mã nguồn của nó. Để thực thi một process thì 2 yếu tố quan trọng nhất là instruction và data. instruction chính là mã nguồn của process, còn data của process sẽ tồn tại bên trong một không gian địa chỉ của riêng process đó, được gọi là virtual address space. Với một hệ điều hành 32 bit, không gian địa chỉ này có độ rộng là 2^32 =  4GB, và đây là một không gian địa chỉ ảo (**virtual address space**). Mỗi một process sở hữu một virtual address space riêng.
+![window-virtual-address-space](https://i-msdn.sec.s-msft.com/en-us/windows/hardware/drivers/gettingstarted/images/virtualaddressspace01.png)
+Việc ánh xạ giữa địa chỉ ảo của một ô nhớ trong process với địa chỉ thật của nó trên RAM, giữa virtual address space với không gian địa chỉ thật trên bộ nhớ vật lý (RAM) của máy tính được thành phần  **page tables** thực hiện 
+Vì sao chúng ta lại sử dụng **virtual address space** - VSA thay vì sử dụng trực tiếp địa chỉ các ô nhớ trên RAM ? Việc sử dụng virtual address space mạng lại các lợi ích sau:
+- Tính tách biệt (isolate) giữa các process: Khi sử dụng VSA, toàn bộ không gian bộ nhớ mà process nhìn thấy chỉ bao gồm những dữ liệu của bản thân process đó, process đó không thể thấy được các dữ liệu của process khác do các VSA của các process là tách biệt nhau, và 1 process xác định chỉ có thể sử dụng VSA của bản thân nó chứ không thể sử dụng VSA của process khác.
+- Process có thể sử dụng các các dải địa chỉ ảo liên tiếp nằm kề nhau trên virtual address space, mặc dù những địa chỉ liên tiếp nhau trên VSA không nhất thiết có địa chỉ ánh xạ tương ứng nằm kề nhau trên bộ nhớ vật lý.
+- Trên môi trường multitasking, nhờ có VSA mà tổng dung lượng bộ nhớ của các process có thể vượt qúa tổng dung lượng của bộ nhớ vật lý.
+
+**end some note**
+
+Quay trở lại với việc phân tích memory của một process. Bây giờ chúng ta sẽ xem từng thành phần trong User mode space chứa gì.
+![program_in_memory](https://gabrieletolomei.files.wordpress.com/2013/10/program_in_memory2.png?w=960)
+
+- Text: Text segment, hay còn được gọi là code segment, là nơi chứa mã nguồn của chương trình.
+Dưới góc độ virtual address space, thì text segment của các process là độc lập với nhau. Nhưng, với các chương trình được chạy từ cùng 1 binary code (ví dụ như 2 terminal process) lại có thể có text segment  ánh xạ về cùng một địa chỉ vật lý. Ta gọi tính chất này của text segment là **shareable**
+![mapping-example](https://c1.staticflickr.com/1/414/32784339355_8ca5365f56_o.png)
+Việc 2 textsegment của nhiều chương trình chạy từ cùng 1 binary code dựa theo cơ chế *memory mapped files*: Khi 2 process cùng được chạy từ 1 file, qúa trình xảy ra như sau: process đầu tiên sẽ tìm xem file mã nguồn mà process đó sẽ chạy đã có ở trên RAM chưa, nếu chưa có thì sẽ xảy ra page fault trên ram, và kernel sẽ load file đó lên RAM, vùng nhớ RAM chứa file đó lúc này được mapping vào virtual address space của process 1 ở vị trí text segment. Khi chúng ta chạy process 2, do file trên đã load vào ram, nên lúc này sẽ không xảy ra page fault nữa, và lúc này kernel sẽ ánh xạ trực tiếp vùng nhớ RAM đã chứa nội dung của file vào virtual address space của process 2.
+Text segment là vùng nhớ **Read-only/Execute** (chỉ được đọc/thực thi) để ngăn process vô tình tự thay đổi mã nguồn của bản thân nó.
+
+-  Data: Data segment - “Initialized data segment”, là phần trong user address space chứa các global varibale và static varibale trong chương trình. Datasegment lại được chia làm 2 phần nhỏ:  **Read-only area** (i.e., RoData): chỉ cho phép đọc dữ liệu trong ô nhớ và **Read-Write area**: cho phép đọc-ghi dữ liệu lên ô nhớ.
+Ví dụ xét đoạn mã C sau nằm ở global (nằm ngoài hàm main()):
+```
+char s[] = "hello world";
+int debug = 1;
+```
+2 biến trên sẽ được lưu vào Read-Write area (khi biên dịch thì biến s[] trở thành một vùng nhớ có kích thước 11 byte, debug trở thành một vùng nhớ có kích thước 4 byte. Việc thay đổi gía trị của s đơn thuần là việc thay đổi gía trị vùng nhớ đó, hay nói cách khác là sau khi biên dịch xong thì s sẽ ành xạ tới một địa chỉ duy nhất và và không thể trỏ sang vùng nhớ khác được. Điều này áp dụng với những trường hợp tương tự. Compiler khi biến một biến thành vùng nhớ sẽ lưu thông tin vùng nhớ đó dưới dạng địa chỉ đầu của vùng nhớ + kích thước của vùng nhớ đó)
+
+Một trường hợp khác cũng nằm trong global area:
+const char* str = "hello world";
+http://stackoverflow.com/questions/9834067/difference-between-char-and-const-char
+```html
+const char*
+is a mutable pointer to an immutable character/string. You cannot change the contents of the location(s) this pointer points to. 
+```
+Chúng ta có thể thấy rằng câu lệnh khai báo trên sẽ tạo ra 2 vùng nhớ, một vùng nhớ để lưu gía trị của str **pointer**, một vùng nhớ để lưu mảng char "hello world". gía trị của str pointer sẽ chính là địa chỉ đầu của vùng nhớ lưu mảng char "hello world".
+Trong trường hợp này,  vùng nhớ lưu mảng char "hello world" sẽ nằm ở Read-only Area, còn vùng nhớ lưu str pointer sẽ nằm ở Read-Write Area, vì chúng ta có thể trỏ pointer sang vùng nhớ khác, hay nói cách khác là giá trị của pointer str có thể được thay đổi bởi chương trình.
+
+Tương tự, trường hợp static int i = 10; thì i sẽ được lưu trong vùng nhớ nằm ở Read-write Area.
+
+- BSS: BSS segment -  “Uninitialized data segment”, các ô nhớ trong vùng nhớ này đều được OS khởi tạo với giá trị  là 0 trước khi thực thi chương trình.
+BSS segment bắt đầu ở điểm kết thúc của data segment, và nó chứa toàn bộ những biến  global và static variable mới được khai báo nhưng chưa được khởi tạo giá trị hoặc được khởi tạo với giá trị bằng 0. Ví dụ, với câu lệnh khai báo static int i, thì i sẽ được đặt trong BSS segment.
+
+*Lý do chúng ta có 2 phân vùng BSS segment và data segment*
+http://stackoverflow.com/questions/9535250/why-is-the-bss-segment-required
+https://www.motherboardpoint.com/threads/what-for-bss-segment.95280/
+Chúng ta xét một ví dụ cụ thể, xét đoạn mã sau:
+```
+int x1 = 0;
+int x2 = 0;
+... 
+int x100 = 0;
+```
+- Trường hợp 1: Nếu như chúng ta chứa mọi biến khởi tạo với gía trị 0 ( chúng ta coi như mọi biến mới được khai báo nhưng chưa được khởi tạo sẽ nhận giá trị 0 lúc bắt đầu thực thi chương trình) trong data segment, lúc này tất nhiên BSS segment sẽ không cần thiết nữa. Lúc này, khi chương trình biên dịch ra mã Assembly, thì nội dung đoạn mã nguồn trên sẽ được dịch thành (dưới dạng pseudo code):
+```
+Khai báo và gán địa chỉ x1;
+Khai báo và gán địa chỉ x2;
+...
+Khai báo và gán địa chỉ x100;
+
+Gán vùng nhớ x1 = 0;
+Gán vùng nhớ x2 = 0;
+...
+Gán vùng nhớ x100 = 0;
+```
+Tổng dung lượng bộ nhớ cần để lưu đoạn mã trên là 100x(kích thước câu lệnh khai báo địa chỉ ) + 100 x kích thước câu lệnh gán vùng nhớ
+
+Nếu sử dụng BSS segment, đoạn mã trên khi biên dịch ra assembly có dạng như sau:
+```
+Khai báo và gán địa chỉ x1;
+Khai báo và gán địa chỉ x2;
+...
+Khai báo và gán địa chỉ x100;
+
+memset(start_bss, 0, length_bss)
+```
+với lengbss là tổng dung lượng các biến chứa trong Bss segment, được compiler tính toán ra trong lúc compile chương trình.
+
+Chúng ta có thể thấy, nếu dùng bss segment, thay vì chúng ta phải lưu 100 lệnh gán gía trị 0 cho các biến chưa khởi tạo hoặc khởi tạo với gía trị =0, lúc này chúng ta chỉ cần lưu 1 biến set tất cả các ô nhớ của bss segment với gía trị =0. Điều này cho chúng ta thấy việc sử dụng bss segment giúp cho file thực thi (là file được compiler biên dịch ra từ file mã nguồn C language) có kích thước nhỏ hơn.
+
+- Stack: Stack là vùng nhớ chứa stack của chương trình - program stack. Stack này có nhiệm vụ lưu trữ mọi dữ liệu mà mộ lời gọi hàm trong chương trình yêu cầu. Cụ thể, tập hợp các biến - gía trị được chứa trong một hàm được gọi là **stack frame**, chứa mọi automatic variables (là các local variable trong thân hàm và các parameter được nạp vào input của hàm) và địa chỉ trả về của hàm - caller return's address. Đây là cơ chế biểu diễn phương thức hàm đệ quy trong C - recursive functions: tập hợp các biến của một hàm đang chạy hoàn toàn độc lập với các biến của một hàm khác.
+Stack segment có thể tự điều chỉnh kích thước mỗi khi có một hàm mới được gọi. Dữ liệu của hàm mới được gọi được push vào đầu stack.
+- Heap: Heap segment là nơi chứa các dynamic allocate data, tức là chứa các vùng nhớ mà kích thước của chúng chỉ được xác định tại thời điểm chương trình chạy, và không thể xác định cố định bởi compiler khi biên dịch chương trình. Ví dụ:
+
+```
+ int i,n;
+  char * buffer;
+
+  printf ("How long do you want the string? ");
+  scanf ("%d", &i);
+
+  buffer = (char*) malloc (i+1);
+```
+Lúc này kích thước của vùng nhớ mà buffer pointer trỏ tới chỉ được xác định khi chương trình đã chạy, và người dùng nhập con số vào scan input. Sau đó câu lệnh **(char*) malloc (i+1);** sẽ tạo ra một vùng nhớ với kích thước **(i+1) *kích thước của ký tự** trong Heap và sau đó buffer sẽ được gán gía trị là địa chỉ đầu của vùng nhớ này.
+
+**more note about virtual address space**
+
+*Vì sao virtual address space tồn tại 2 phần lớn: **user mode space** và **kernel mode space***  ?
+Chúng ta sẽ tìm hiểu các vân đề sau:
+- Vai trò của user mode space và kernel mode space.
+- Sự tương tác giữa user mode space và kernel mode space thông qua system call, và cách mà process thực hiện tương tác này.
+
+Trong hai bộ phân lớn của virtual address space, thì user mode space là không gian địa chỉ mà một process được toàn quyền tác động, lưu trữ mọi dữ liệu mà process đó quản lý. Kernel mode space là không gian địa chỉ dành riêng để chứa một số thành phần của kernel, trong đó có một vùng chứa các câu lệnh kernel - **kernel instruction** cho phép thực thi các chức năng của hệ thống .  
+
+Khi thực hiện các câu lệnh chứa trong mã nguồn của process - text segment , process sẽ ở trạng thái **user mode**, lúc này các câu lệnh của process này chỉ có quyền truy cập vào không gian bộ nhớ **User mode space** và thực hiện các câu lệnh có địa chỉ nằm bên trong không gian bộ nhớ này, nếu các câu lệnh này cố tình truy cập vào các ô nhớ có địa chỉ nằm trong không gian **Kernel mode space** thì sẽ tạo ra 1 **exception interrupt**  tác động lên CPU và khiến cho chương trình bị crash.
+
+Tuy nhiên, trong nhiều trường hợp, process của người dùng cần thực hiện mốt số câu lệnh liên quan tới chức năng của hệ thống, vì dụ như: In ra màn hình dòng chữ "Hello world". Vấn đề là thao tác in ra màn hình của hệ thống chỉ có thể được thực hiện bởi **kernel instruction**. Nhưng như ta đã nói ở phần trước, các câu lệnh trong text segment không thể chuyển trực tiếp - như là dùng lệnh jump để chuyển tới **kernel instruction**. Do vậy chúng ta cần phải sử dụng một cơ chế đặc biệt để có thể processor chuyển tới thực hiện kernel instruction - sử dụng system call. Ta xét một ví dụ sau:
+```assembly
+
+        .global _start
+
+        .text
+_start:
+        # write(1, message, 13)
+        mov     $1, %rax                # system call 1 is write
+        mov     $1, %rdi                # file handle 1 is stdout
+        mov     $message, %rsi          # address of string to output
+        mov     $13, %rdx               # number of bytes
+        syscall                         # invoke operating system to do the write
+
+        # exit(0)
+        mov     $60, %rax               # system call 60 is exit
+        xor     %rdi, %rdi              # we want return code 0
+        syscall                         # invoke operating system to exit
+message:
+        .ascii  "Hello, world\n"
+```
+[source from cs.lmu](http://cs.lmu.edu/~ray/notes/linuxsyscalls/)
+Khi một process được trao CPU, việc nó làm là thực thi các câu lệnh (instruction) có trong mã nguồn của nó trên RAM.  Các thực thể có thể tồn tại trong một câu lệnh là: Tập các thanh ghi mà CPU cho phép process tác động tới và một không gian địa chỉ bộ nhớ xác định. Khi chương trình cần thực thi một chức năng do kernel instruction cung cấp, nó sẽ ghi vào một register đặc biệt một gía trị đặc biệt tương ứng với việc gọi system call. Trong đoạn mã trên, chúng ta có thể thấy register đó là **rax register**, các gía trị đặc biệt là 1, 60. Trong đó system call tương ứng với gía trị rax = 1 là system call có chức năng in ra màn hình.
+
+Như vậy, chúng ta hiểu rằng câu lệnh trong process chuyển processor tới thực hiện system call bằng sử dụng các thanh ghi các gía trị đặc biệt để báo hiệu cho processor chuyển qua thực hiện system call tương ứng. Đây cũng chính là cơ chế tương tác giữa user mode space và kernel mode space.
+
+Vì tất cả mọi process đều có  sử dụng system call và có phần dữ liệu kernel giống nhau, do đó process chia sẻ virtual address space với kernel bằng cách tách riêng một phần virtual address space cho kernel - kernel mode space. Với mọi process thì kernel mode space đều nằm ở cùng 1 vị trí từ  **0x c000 0000** tới **ox ffff ffff**, và cùng ánh xạ tới cùng một vùng nhớ trên RAM - hay kernel mode space cũng là shareable memory. Tính chất này giúp cho vùng kernel mode space là đồng nhất với nhau ở mọi process, và hơn thế nữa giúp giảm chi phí chuyển đổi khi process thực hiện chuyển đổi từ process này sang process khác, cũng như chi phí khi process chuyển từ user mode sang kernel mode để thực hiện kernel instruction trong kernel mode space.
+
+
+
+##1.1.2 Định nghĩa thread
+Trong Linux, thread được định nghĩa như sau:
+
+- Một thread được định nghĩa là một **stream of executable code** của một Linux process mà có khả năng được lập lịch độc lập bởi **scheduler** - thành phần phân phối proccessor của hệ điều hành. 
+- Thread là một thành phần của process, một process có thể có một hoặc nhiều thread, process có nhiều thread được gọi là multithreading process.
+- Trong process, sẽ có một process đóng vai trò **primary thread**, thread này sẽ thực thi luồng điều khiển chính của process, các thread còn lại gọi là **sub-thread**.
+- Trong một multitheading process, mỗi một thread chứa một luồng điều khiển (khối mã nguồn được lập trình viên viết để thực thi trên thread) riêng, và một thread ( mà không phải là primary thread) sẽ được sinh ra ở một thời điểm xác định bởi process quản lý nó. Sau khi thread được process sinh ra, luồng điều khiển của thread đó sẽ được thực thi độc lập và đồng thời (concurrency) với các thread còn lại trong process. 
+![multithreading process](http://i.imgur.com/MJxFjwK.png)
+
+**The Anatomy of a Thread**
+Chúng ta cùng xem cấu tạo của thread thể hiện trên bộ nhớ máy tính.
+Đây là ví dụ về một process có chứa nhiều thread:
+![process_contains_multiple_threads](https://c1.staticflickr.com/3/2689/32675096571_1e3d1e0634_o.png)
+ Như chúng ta thấy, layout của thread được nhúng vào layout của process chứa nó. các thành phần chính của process là stack segment, data segment (Heap + Bss + Data), và text segment. Với thread, các thành phần cần thiết để một thread thực thi là thread stack, thread excutable code, thread data segment.Qua ví dụ trên, ta có thể thấy, thread  excutable code là một thành phần nằm trong text segment, thread data segment cũng chính là data segement của process ( khi thread cần tạo ra một vùng nhớ động (ví dụ như khi trong thread excutable code có chứa câu lệnh buffer = (char*) malloc (i+1);), thì vùng nhớ động đó sẽ được allocate trong heap segment của process). Còn thread stack sẽ được tạo ra bên trong stack segment của process, và các thread khác nhau sẽ sở hữu các stack độc lập với nhau. Thread stack cũng chứa các **stack frame** do các function trong thread excutable code khi thực thi tạo ra như là process stack. một stack frame trong thread stack cũng chứa passing parameter, local variable, và return address của function trong thread.
+
+Thread chia sẻ hầu hết tài nguyên của nó với các threads khác trong process. Thread context định nghĩa các thành phần sau do thread tạo ra: Thread id, tập các register như stack pointer và program counter, và thread stack. Thread chia sẻ tất cả các tài nguyên như process, memory với các thread khác.
+Thread tồn tại trong process, và nó có chung vitual address space với process, do đó nó có thể nhìn thấy mọi địa chỉ trong virtual address space.
+
+Có một câu hỏi được đặt ra, là tại sao thread chia sẻ hầu hết tài nguyên của nó với các thread khác trong process, và thread dùng chung virtual address space với process, mà chương trình sau:
+```python
+#!/usr/bin/python
+
+import thread
+import time
+
+# Define a function for the thread
+def print_resource( threadName, delay):
+	print y
+
+def main():
+	y = 16
+	# Create two threads as follows
+	try:
+	   thread.start_new_thread( print_resource, ("Thread-1", 2, ) )
+	   thread.start_new_thread( print_resource, ("Thread-2", 4, ) )
+	except:
+	   print "Error: unable to start thread"
+main()
+while 1:
+	pass
+```
+lại in ra
+```bash
+cong@cong-HP-ProBook-450-G1:~$ python threading.py 
+Unhandled exception in thread started by <function print_resource at 0x7fc7c06c0500>
+Traceback (most recent call last):
+Unhandled exception in thread started by <function print_resource at 0x7fc7c06c0500>
+Traceback (most recent call last):
+  File "threading.py", line 6, in print_resource
+  File "threading.py", line 6, in print_resource
+        print y
+NameError: print y
+global name 'y' is not definedNameError: global name 'y' is not defined
+```
+Ta thấy rõ ràng y là một local variable của main thread, theo như lý thuyết thì các câu lệnh trong thread vẫn có thể truy cập được vào ô nhớ chứa y, nhưng tại sao hiện tượng trên lại xảy ra, có gì mâu thuẫn giữa ví dụ trên và lý thuyết hay không ?
+
+Câu trả lời là giữa ví dụ trên và lý thuyết không có gì mâu thuẫn. Lý do là, nếu chúng ta có địa chỉ của ô nhớ chứa local variable y, và viết lại hàm print_resource bằng assembly và sử dụng câu lệnh in ra gía trị chứa trong địa chỉ ô nhớ trên, thì màn hình sẽ hiện ra gía trị của biến y. Tức là vẫn đảm bảo thread truy cập được vào mọi ô nhớ (tất nhiên trừ kernel mode space) trong virtual address space. Còn lý do tại sao mà trong chương trình trên chúng ta không lấy được gía trị biến y, là vì chúng ta không lập trình chương trình trên băng assembly mà là lập trình bằng python, lúc này trong câu lệnh **print y** complier cần phải có địa chỉ của biến y, nhưng theo luật LEGB của python thì trong thân của hàm **print_resource( threadName, delay)** không thể truy cập đến local variable y trong hàm main(), do đó màn hình hiển thị ra kết qủa trên. Như vậy là ở đây không xảy ra mâu thuẫn gì cả. Nếu chúng ta lập trình bằng assembly, chúng ta vẫn có thể truy cập được vào các ô nhớ trong virtual address space.
+
+*update: Không cần thiết phải sử dụng assembly, chúng ta sẽ chứng minh kết luận nêu trên bằng một chương trình viết bằng c++*
+```c
+#include <iostream>
+#include <cstdlib>
+#include <pthread.h>
+
+using namespace std;
+
+#define NUM_THREADS     5
+
+void *PrintHello(void* y_pointer) {
+   int y_receiver = *(int*)y_pointer;
+   cout << y_receiver;
+   cout <<'\n';
+   pthread_exit(NULL);
+}
+
+int main () {
+   pthread_t threads[NUM_THREADS];
+   int rc;
+   int i;
+   int y = 9;
+   int* y_pointer = &y;
+
+   for( i=0; i < NUM_THREADS; i++ ){
+      rc = pthread_create(&threads[i], NULL, PrintHello, y_pointer);
+
+      if (rc){
+         cout << "Error:unable to create thread," << rc << endl;
+         exit(-1);
+      }
+   }
+
+   pthread_exit(NULL);
+}
+```
+lưu chương trình trên vào file ```threading.cpp```, sau đó các bạn biên dịch chương trình trên bằng lệnh sau:
+```bash
+g++ threading.cpp -lpthread
+```
+rồi chạy file được tạo ra sau khi biên dịch (trên máy tính của tôi là file ```a.out```):
+```bash
+cong@cong-HP-ProBook-450-G1:~$ ./a.out 
+9
+9
+9
+9
+9
+``` 
+các bạn có thể thấy, các câu lệnh trong sub_thread vẫn truy cập được vào local variable ```y``` trong primary_thread.
+Sau khi tìm hiểu về một số tính chất của thread và process trong hệ điều hành, chúng ta quay trở lại chủ đề chính của nội dung bài viết, green thread model
+###1.2 Green thread model
+
+> Written with [StackEdit](https://stackedit.io/).
