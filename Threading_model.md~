@@ -1,11 +1,13 @@
 #Threading model - Nova Architech
-OpenStack là một hệ thống lớn, bao gồm rất nhiều các service phối hợp với nhau để tạo thành một hệ thống phân tán quản lý và phân phối tài nguyên đám mây hiệu quả. Một trong các yêu cầu quan trọng nhất khi xây dựng các service trong OpenStack, đó là chúng ta phải đảm bảo các service làm việc với hiệu năng - performance cao nhất. Vì toàn bộ hệ thống OpenStack đạt hiệu năng cao nhất chỉ khi mọi service cấu thành nên hệ thống đều đạt hiệu suất cao nhất. Nếu như một service nào trong hệ thống làm việc với hiệu năng thấp thì service đó sẽ tạo ra ngẽn cổ chai (bottleneck), ảnh hưởng tới khả năng xử lý của toàn bộ hệ thống.
 
-Một trong các tiêu chí để đánh giá hiệu năng của một service, đó là khả năng **concurrency** của service đó. Khả năng này nói lên rằng service đó có khả năng xử lý bao nhiêu tác vụ trong một khoảng thời gian. Để tạo ra khả năng concurrency cho các service, có rất nhiều phương pháp, như là sử dụng multiprocessing, multithreading, asynchronous,vv... Giải pháp được OpenStack service sử dụng để tạo ra khả năng concurrency cho hệ thống, đó là sử dụng mô hình **green thread model** thông qua các thư viện **Python eventlet** và **greenlet**. Tại sao OpenStack lại lựa chọn mô hình **green thread model**? Bài viết này sẽ giới thiệu về green thread model, eventlet và greenlet, cũng như lý do mà các OpenStacks service sử dụng các giải pháp này
+Tất cả các OpenStack service đều sử dụng **green thread model** cho việc threading. Model này được thực hiện bằng cách sử dụng **Python eventlet** và **greenlet libraries**.
 
-Đầu tiên, chúng ta cần hiểu được, concurrency là gì. Sau đó, bài viết sẽ trình bày về hai giải pháp truyền thống để giải quyết vấn đề concurrency trong lập trình - Multiproccessing và Multithreading. Sau đó, chúng ta sẽ tìm hiểu xem, green thread model là gì, và hai python librarry implement green thread model là greenlet và eventlet 
+##1 What is green thread model ?
+Để hiểu về **green thread model**, trước tiên chúng ta cần phải hiểu về threading model.
+###1.1 Định nghĩa về thread - process
+Để hiểu về thread là gì, đầu tiên chúng ta cần phải hiểu tại sao sinh ra khái niệm thread, đó là vì nhu cầu lập trình tương tranh - concurrent programming.
 
-##1. Concurrent programming
+####Concurrent programming
 Trong lập trình, 2 sự kiện được gọi là concurrent với nhau nếu như chúng xảy ra trong cùng 1 **time interval**. Do vậy, nếu một môi trường thực thi (thường là OS) có 2 hay nhiều **tasks** được thực hiện trong cùng 1 **time interval**, thì ta gọi môi trường thực thi đó có tính **concurrency**.
 Ví dụ: Một hệ điều hành đa nhiệm (thực thi được nhiều chương trình cùng 1 lúc ) được gọi là một hệ điều hành có tính **concurrency**.
 
@@ -48,7 +50,7 @@ Concurrency có thể xảy ra ở các tầng sau:
 - Object level - CORBA (Common Object Request Broker Architecture) standard
 - Application level
 
-##2. Process và MultiProcessing
+##1.1.1 Định nghĩa process 
 Một process là một đơn vị công việc được tạo ra bởi hệ điều hành (operating system). Một process không phải lúc nào cũng tương đương với một chương trình. Một chương trình có thể bao gồm nhiều process. Ở một vài trường hợp, một process cũng có thể không liên quan tới một chương trình nào cả. Process là sản phẩm của hệ điều hành, trong khi đó chương trình là sản phẩm của developer.
 Để một đơn vị công việc được gọi là một process, nó cần có một không gian địa chỉ - **address space** đã được hệ điều hành chỉ định dành riêng cho nó. Nó cần phải có một **proccess id**. Nó cần phải có một **state** và một entry trong **process table**. Theo chuẩn POSIX, một process cần phải có 1 hoặc nhiều flows control với không gian địa chỉ xác định và tài nguyên hệ thống để thực thi các flows control này. Một process sẽ có một tập các chỉ dẫn thực thi hệ thống (executing instructions) nằm trong không gian địa chỉ của process đó. Không gian địa chỉ của một process được cấp phát cho tập chỉ dẫn thực thi, mọi dữ liệu thuộc về process đó, một stack cho  các lời gọi hàm (function calls), và không gian nhớ cho local variables.
 
@@ -203,7 +205,7 @@ Vì tất cả mọi process đều có  sử dụng system call và có phần 
 
 
 
-##3. Thread and MultiThreading
+##1.1.2 Định nghĩa thread
 Trong Linux, thread được định nghĩa như sau:
 
 - Một thread được định nghĩa là một **stream of executable code** của một Linux process mà có khả năng được lập lịch độc lập bởi **scheduler** - thành phần phân phối proccessor của hệ điều hành. 
@@ -299,14 +301,12 @@ int main () {
 }
 
 ```
-
 lưu chương trình trên vào file ```threading.cpp```, sau đó các bạn biên dịch chương trình trên bằng lệnh sau:
 
 ```bash
 g++ threading.cpp -lpthread
 ```
 rồi chạy file được tạo ra sau khi biên dịch (trên máy tính của tôi là file ```a.out```):
-
 ```bash
 cong@cong-HP-ProBook-450-G1:~$ ./a.out 
 9
@@ -316,10 +316,9 @@ cong@cong-HP-ProBook-450-G1:~$ ./a.out
 9
 ``` 
 các bạn có thể thấy, các câu lệnh trong sub_thread vẫn truy cập được vào local variable ```y``` trong primary_thread.
-
-
-###4 Green thread model, Greenlet And Eventlet
-####4.1 Global Interpreter Lock - GIL
+Sau khi tìm hiểu về một số tính chất của thread và process trong hệ điều hành, chúng ta quay trở lại chủ đề chính của nội dung bài viết, green thread model
+###1.2 Green thread model
+####Global Interpreter Lock - GIL
 
 
 ####Green thread
@@ -335,90 +334,4 @@ Như đã trình bày ở trên, chương trình sử dụng green thread chỉ 
 Với mô hình green thread, chúng ta có thể điều khiển được việc thực thi và tạm ngừng một thread trong chương trình, do đó giúp chúng ta dễ dàng thực hiện quá trình đồng bộ hơn so với việc sử dụng multithreading với hệ điều hành.
 
 ####Greenlet
-Thư viện **Greenlet** là một implement library của **green thread** trong ngôn ngữ lập trình Python. Khi sử dụng thư viện này, chương trình của chúng ta tạo ra các *greenlet*, là các khối mã nguồn độc lập với nhau. Chương trình của bạn sử dụng các **greenlet** này bằng cách thực thi các câu lệnh trong các greenlet, đồng thời bạn có thể điều khiển được quá trình chương trình nhảy từ một greenlet này sang một greenlet khác để thực thi các câu lệnh chứa trong greenlet đó. Việc chuyển đổi giữa các greenlet trong chương trình được gọi là *switching*. Trước khi chuyển đổi, greenlet chuẩn bị chuyển đổi phải xác định rõ ràng greenlet mà chương trình muốn chuyển qua.
-
-Khi bạn tạo ra một greenlet, nó khởi tạo một stack rỗng, mỗi một greenlet có một stack riêng. Khi bạn chuyển tới thực thi các câu lệnh trong stack của greenlet **a**, khối lệnh của greenlet **a** được nạp vào stack và các câu lệnh trong khối lệnh của greenlet a được stack pop ra lần lượt để chương trình thực thi. Một câu lệnh được thực thi có thể là một câu lệnh thông thường, hoặc một câu lệnh *switch*. Khi hệ thống thực thi câu lệnh **switch** sang greenlet **b**, việc pop các câu lệnh trong stack của greenlet **a** ra được tạm dừng, và hệ thống chuyển qua stack của greentlet được chỉ định trong câu lệnh switch (greenlet b) để thực thi các câu lệnh chứa trong stack của greenlet b. Khi hệ thống chuyển về thực hiện tiếp greenlet **a** các câu lệnh chứa trong stack của greenlet a lại tiếp tục được pop ra từ điểm mà greenlet a bị tạm ngưng trước đó và được chương trình tiếp tục thực thi. Khi tất cả các câu lệnh của greenlet **a** được chương trình thực  thi xong, stack của greenlet a chuyển sang trạng thái **empty**, lúc này greenlet a chuyển sang trạng thái **dead**. Một exception không được handle xuất hiện trong một greenlet cũng có thể khiến greenlet đó bị rơi vào trạng thái dead.
-
-Vậy khi một greenlet **die** , luồng điều khiển của hệ thống chuyển qua khối lệnh nào ? Trong mô hình greenlet, mọi greenlet đều có một **parent** greenlet. Parent của một greenlet **a** chính là greenlet chứa câu lệnh khởi tạo greenlet **a**. Khi một greenlet **die**, luồng điều khiển của hệ thống tiếp tục thực thi các câu lệnh trong parent greenlet của greenlet vừa mới **die**. Bằng cách này, các greenlet trong hệ thống được tổ chức thành một tree, trong đó root của tree đó chính là **main** greenlet, hay là luồng điều khiển chính của chương trình. 
-
-Như ta đã nói, các greenlet trong chương trình có thể switch qua lại nhau khi chúng ta sử dụng phương thức switch(). Khi gọi tới câu lệnh này, chúng ta có thể truyền kèm theo các object tới greenlet đích, đây là một cách tiện lợi để có thể trao đổi thông tin giữa các greenlet với nhau.
-
-Ví dụ:
-```python
-def test1(x, y):
-    z = gr2.switch(x+y)
-    print z
-
-def test2(u):
-    print u
-    gr1.switch(42)
-
-gr1 = greenlet(test1)
-gr2 = greenlet(test2)
-gr1.switch("hello", " world")
-
-```
-
-Trong chương trình trên, chúng ta có ra 3 greenlet gr1 và gr2 và **main greenlet**. gr1 và gr2 nhận main greenlet là parent, do 2 greenlet này được tạo ra trong thân của main greenlet. Sau câu lệnh ```gr1.switch("hello", " world")```, hệ thống chuyển sang thực thi các câu lệnh của greenlet 1, đó chính là hàm test1, với x và y được truyền vào greenlet gr1 là **hello** và **world**. Do vậy, trong hàm test1, ta có x = "hello" và y = "world". Sau đó, câu lệnh ```z = gr2.switch(x+y)``` chuyển chương trình sang thực hiện greenlet gr2, với tham số truyền vào là "hello world". gr2 thực hiện hàm test2, in ra tham số "hello world" rồi switch qua gr1 với tham số truyền vào gr1 là 42. Lúc này gr1 đang tạm dừng tại câu lệnh ```z = gr2.switch(x+y)```, đo đó khi gr2 thực hiện switch sang, z sẽ nhận giá trị là 42. Sau đó câu lệnh ```print z``` được thực hiện, và kết quả hiện ra trên màn hình là :
-```bash
-hello world
-42
-```
-Như chúng ta thấy trong ví dụ trên, ta có thể thấy greenlet đích nhận các đối tượng do greenlet nguồn gửi qua như là giá trị trả về của câu lệnh ```switch()```  (```z =gr2.switch(x+y)```) tại vị trí mà trước đó trong quá khứ greenlet này đã tạm dừng. Tuy nhiên, cho dù câu lệnh switch() sẽ không ngay lập tức trả về kết quả, nhưng câu lệnh này sẽ trả về kết quả tại một thời điểm trong tương lai, khi mà một greenlet khác trong hệ thống switch trở lại greenlet này. Điều này có nghĩa là ```x = g.switch(y)``` trong greenlet ```g_prev``` được thực hiện, ```g_prev``` sẽ chuyển ```object y``` tới greenlet ```g```, và sau đó một greenlet khác trong hệ thống khi switch back trở lại greenlet ```g_prev```bằng một câu lệnh switch khác như là ``` g_prev.switch(z)```, ```thì object z``` sẽ được nạp vào greenlet ```g_prev``` dưới dạng kết quả trả về của câu lệnh ``` g.switch(y)```, hay nói cách khác lúc này ta sẽ nhận được kết quả là ```x = z```
-
-Greenlet không thể đồng nhất với Python thread, mỗi thread trong hệ thống sẽ chứa một main greenlet riêng biệt, do đó không thể trộn hoặc switch giữa các greenlet nằm ở các thread khác nhau với nhau.
-
-####Non-blocking I/O and Eventlet
-
-Như đã nói, khi thiết kế các service trong OpenStack, chúng ta cần lựa chọn giải pháp để tạo ra tính concurrency cho các service. Các giải pháp đã nêu ra ở các phần trước như MultiProccessing hay MultiThreading đều giải quyết được vấn đề concurrency, nhưng giải pháp được lựa chọn để sử dụng trong OpenStack service, đó là green threading model với 2 library **greenlet** và **eventlet**. Green threading model được lựa chọn làm giải pháp khi xây dựng OpenStack service, vì các OpenStacks service đạt được tính concurrency khi chúng ta sử dụng non-blocking I/O.
-
-Nhiệm vụ của các service trong OpenStack tương tự như nhiệm vụ của các web server, đó là phục vụ các request gửi tới service đó. Tính concurrency của OpenStacks service được đánh giá thông qua số lượng request mà service đó có khả năng phục vụ trong cùng một khoảng thời gian -time slice. Như đã nói , để phục vụ cùng một lúc nhiều request trong một time slice, chúng ta có thể sử dụng multi-processing, multi-threading hoặc green-thread. Nhưng lựa chọn giải pháp nào trong các giải pháp đã nêu ra ở trên, lại phụ thuộc vào tính chất của request mà service cần phục vụ.
-
-Khi nhận được một request từ một Client nào đó gửi tới, nhiệm vụ của service là phải tạo ra một luồng xử lý độc lập - **hanlder** để phục vụ request mà service nhận được
-
-![Server_Architect](./image/Server_Architect.png) 
-
-Luồng xử lý độc lập này sẽ thực hiện các thao tác sau để phục vụ một request:
-- Nhận request từ dispactcher, sau đó đọc nội dung request để hiểu được request đang cần server phục vụ.
-- Lấy ra tài nguyên mà request yêu cầu: Handler sẽ lấy tài nguyên từ hệ thống, ví dụ như tải một file ảnh, một đoạn video, một tài liệu, hoặc truy xuất 1 dữ liệu SQL vv...
-- Gửi phản hồi -response về Client: Handler lấy tài nguyên vừa lấy được từ hệ thống đưa vào response, sau đó truyền response qua connection (mạng) về Client.
-Trong 3 thao tác trên, các thao tác lấy tài nguyên và gửi phản hồi về client là các thao tác tiêu tốn rất nhiều thời gian vào việc chờ đợi I/O của hệ thống trở về trạng thái ready. Trong thao tác lấy tài nguyên của hệ thống theo yêu cầu từ request, thì khi hệ thống đang giao I/O cho một handler khác trong server hay một process khác sử dụng, thì hệ thống sẽ báo I/O đang ở trạng thái busy, và lúc này handler không thể sử dụng I/O của hệ thống đề đọc/ghi tài nguyên - ví dụ như ổ đĩa cứng của hệ thống không thể cùng lúc phục vụ 2 handler/tiến trình, nếu như dữ liệu mà 2 tiến trình này muốn đọc nằm trên 2 vùng nhớ vật lý khác nhau. Lúc này hanldler phải chờ cho đến bao giờ proccess/handler kia sử dụng xong I/O - I/O trở về trạng thái ready thì mới có thể yêu cầu hệ thống giao I/O cho mình. Tương tự như vậy, thao tác gửi phản hồi cho Client cũng tiêu tốn thời gian chờ đợi connection I/O , nếu như connection của hệ thống đang được một handler/process khác sử dụng để gửi dữ liệu. Trong trường hợp handler ghi phản hồi ra bộ đệm của connection I/O, thì handler lại phải chờ đợi I/O  của ổ đĩa cứng ready thì mới có thể ghi response vào bộ đệm, vì bộ đệm của connection thường nằm trên một vùng nhớ của ổ đĩa cứng. Từ những vấn đề này, chúng ta có thể thấy, các handler trong server phải tiêu tốn rất nhiều thời gian để chờ đợi đến lượt các loại I/O trong hệ thống phục vụ nó.
-
-Để tạo ra luồng xử lý độc lập nói trên, chúng ta có 3 giải pháp:
-
-- Sử dụng mô hình multi-processing, với handler là các proccess.
-- Sử dụng mô hình multi-threading, với các handler là các thread.
-- Sử dụng mô hình green thread model, với các hanlder là các greenlet.
-
-Ở đây, chúng ta sẽ có một câu hỏi, đó là 3 giải pháp trên đối mặt với vấn đề các handler phải chờ đợi **I/O ready** như thế nào ?
-
-- Đối với mô hình multi-processing và multi-threading, khi chuyển qua phục vụ một  handler phải chờ đợi **I/O ready**, kernel của hệ thống sẽ sleep thread/process đang phải chờ đợi và chuyển qua phục vụ các processor/thread khác. Hiện tượng này được gọi là **I/O blocking**.
-- Một cách xử lý khác trong mô hình multi-processing và multi-threading, đó là chúng ta sử dụng **non-blocking I/O**. Khi sử dụng cách tiếp cận này, khi handler gọi đến một câu lệnh sử dụng System I/O, nếu như System I/O đang ở trạng thái busy, thì hệ thống sẽ báo lỗi **busy I/O** cho process. Lúc này process hiểu được System I/O đang busy, và lúc này process có thể thực hiện các câu lệnh khác không liên quan tới I/O và sau đó kiểm tra lại xem System I/O đã ready hay chưa ? Nếu System I/O đã ready, process sẽ thực hiện lại câu lệnh sử dụng System I/O mà lúc trước nó chưa thực hiện được.
-
-Như vậy, trong trường hợp sử dụng  **I/O blocking**, kernel hệ thống sẽ sleep process tới khi **System I/O ready**. Còn trong trường hợp sử dụng **non-blocking I/O**, thay vì sleep process, kernel hệ thống sẽ báo lỗi tới process, lúc này process sẽ không bị sleep mà có thể thực hiện tiếp các câu lệnh tiếp theo phía sau câu lệnh I/O (tất nhiên, các câu lệnh phía sau cũng có thể chính là các câu lệnh xử  lý trường hợp process nhận được báo lỗi I/O từ kernel của hệ thống như trong ví dụ của bài viết sau: https://blogs.gnome.org/markmc/2013/06/04/async-io-and-python/) .
-
-Đối với trường hợp **non-blocking I/O**, ngoài giải pháp báo lỗi, chúng ta còn có thể sử dụng một số giải pháp khác như asynchronous function - thực hiện câu lệnh System I/O mà không cần đợi kết quả trả về, các behavior của câu lệnh asynchronous sẽ được thực hiện vào một khoảng thời gian khi mà System I/O của hệ thống ready, callback - đi kèm với asynchronous function - các phương thức xử lý kết quả trả về của một asynchronous funtion, vv... Mục tiêu khi sử dụng **non-blocking I/O**, đó là tạo ra một cơ chế cho phép khi một process thực hiện các câu lệnh liên quan tới System I/O  khi System I/O đang busy, thì process đó sẽ không bị kernel sleep nữa, mà process đó sẽ được tiếp tục thực hiện các câu lệnh phía sau câu lệnh System I/O đó.
-
-- Mô hình green thread model cũng sử dụng **non-blocking I/O** để giải quyết vấn đề System I/O, tuy nhiên cách thực hiện **non-blocking I/O** của mô hình này khác so với cách thực hiện của multi-processing/multi-threading. Khi một greenlet đang phải chờ đợi **I/O ready** từ hệ thống, process sẽ tạm thời sleep greenlet đang chờ **I/O ready** rồi switch sang thực hiện một greenlet khác. (Trước khi switch sang greenlet khác, greenlet đang chờ **I/O ready** sẽ được gán một call_back, cho phép nó xác định được khi nào nó được sử dụng System I/O). Vì tất cả các greenlet của hệ thống đều cùng nằm chung một process/thread, do đó việc switch từ greenlet này sang greenlet khác trong process đó thực chất không làm ngừng lại quá trình hoạt động của process, mà chỉ đơn giản là process đó thay vì thực hiện các câu lệnh thuộc greenlet này thì chuyển qua thực hiện các câu lệnh thuộc greenlet khác. Vì vậy, process sử dụng green thread model sẽ không bị sleep khi System I/O đang busy, mà chỉ có các greenlet đang chờ I/O ready mới chuyển sang trạng thái **"sleep"**. Chính vì vậy, mô hình green thread model thỏa mãn tính chất của  **non-blocking I/O**
-
-
-Bên cạnh việc green thread model thỏa mãn tính chất **non-blocking I/O**, thì green thread model còn một số ưu điểm nữa so với mô hình multi-processing và multi-threading. Đó là  việc một process thực hiện switch giữa hai greenlet trong cùng process đó ít tốn kém chi phí hơn nhiều so với việc kernel switch giữa 2 thread hoặc 2 process, cũng như chi phí bộ nhớ dành cho các greenlet ít hơn  so với chi phí bộ nhớ để tạo ra các process/thread độc lập. 
-
-Chính vì những ưu điểm kể trên của green -thread model, nên OpenStack services đã sử dụng mô hình green-thread model để giải quyết vấn đề concurrency, thay vì sử dụng multi-processing/multi-threading.
-
-Eventlet là thư viện implement green thread model (base greenlet) được sử dụng trong OpenStack. Cơ chế hoạt động của eventlet khi xử lý vấn đề request concurrency như sau:
-
-Một chương trình python sử dụng eventlet khi được chạy sẽ chỉ tạo ra 1 process/ 1 thread trong hệ thống. Process này có khả năng xử lý đồng thời rất nhiều request  trong một khoảng thời gian, bằng cách tạo ra một loạt các greenlet. Mỗi một greenlet được tạo ra là một handler độc lập, chịu trách nhiệm xử lý một request. Đặc điểm của các greenlet này, đó là khi một greenlet xử lý reqest, nó được process thực hiện liên tục mà không bị switch sang các greenlet khác, trừ trường hợp greenlet đó phải chờ System I/O ready. Lúc này, như đã trình bày ở phần trước, greenlet này sẽ tạm thời được sleep để chờ System I/O ready, và lúc này process sẽ sử dụng một module đặc biệt là [monkey-patching](http://eventlet.net/doc/patching.html) để switch sang một greenlet khác đang không phải chờ System I/O. Process tạm thời ngừng phục vụ request hiện tại, và chuyển sang phục vụ một request khác, request hiện tại sẽ có cơ hội được phục vụ trở lại khi System I/O ready. Đây là cơ chế giúp Evenlet tạo ra tính chất **non-blocking I/O** - process liên tục thực thi các greenlet mà không ngừng lại khi System I/O busy xảy ra.
-
-Một trong những hạn chế của chương trình sử dụng Evenlet, đó là do chỉ tạo ra 1 process/ 1 thread, do đó hệ thống không có khả năng xử lý cùng 1 lúc nhiều request **cùng một lúc **( việc xử lý nhiều request cùng một lúc chỉ có thể được thực hiện khi sử dụng multi-processing/multi-threading).
-
-
-
-##Reference
-https://vietstack.wordpress.com/2015/08/24/openstack-eventlet-notices/
-http://techbackground.blogspot.com/2013/03/eventlet-snippets.html
-https://en.wikipedia.org/wiki/Coroutine
-http://eventlet.net/doc/
-http://www.hydrogen18.com/blog/fast-async-python-eventlet.html
-https://vaidik.in/blog/understanding-non-blocking-io-with-python-part-1.html
-https://blogs.gnome.org/markmc/2013/06/04/async-io-and-python/
+Thư viện **Greenlet** là một implement library của **green thread** trong ngôn ngữ lập trình Python. Khi sử dụng thư viện này, chương trình của chúng ta tạo ra các *greenlet*
